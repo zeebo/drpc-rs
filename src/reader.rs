@@ -6,7 +6,7 @@ use super::transport;
 type Transport<'a, E> = Box<dyn transport::Transport<Error = E> + 'a>;
 
 #[derive(Debug)]
-enum Error<E: std::fmt::Debug> {
+enum Error<E> {
     ReadError(E),
     ParseError,
     IDMonotonicityError,
@@ -19,7 +19,7 @@ struct Reader<'a, E> {
     id: id::ID,
 }
 
-impl<'a, E: std::fmt::Debug> Reader<'a, E> {
+impl<'a, E> Reader<'a, E> {
     fn new(tr: Transport<'a, E>) -> Reader<'a, E> {
         Reader {
             tr: tr,
