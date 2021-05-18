@@ -4,6 +4,7 @@
 mod frame;
 mod id;
 mod packet;
+mod reader;
 mod split;
 mod transport;
 mod varint;

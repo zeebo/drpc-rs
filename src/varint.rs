@@ -1,20 +1,23 @@
 #[derive(Debug, PartialEq, Eq)]
-pub enum ReadResult<'a> {
-    Ok(u64, &'a [u8]),
+pub enum ReadResult {
+    Ok(u64, usize),
     NotEnoughData,
     VarintTooLong,
 }
 
 pub fn read(mut buf: &[u8]) -> ReadResult {
     let mut out: u64 = 0;
+    let mut n: usize = 0;
 
     for shift in (0..64).step_by(7) {
+        n += 1;
+
         if let [val, rem @ ..] = buf {
             out |= ((*val as u64) & 127) << shift;
             buf = rem;
 
             if *val < 128 {
-                return ReadResult::Ok(out, buf);
+                return ReadResult::Ok(out, n);
             }
         } else {
             return ReadResult::NotEnoughData;
@@ -36,14 +39,14 @@ pub fn append(buf: &mut Vec<u8>, mut x: u64) -> () {
 mod tests {
     #[test]
     fn read_simple() {
-        assert_eq!(super::read(&[1, 2, 3]), super::ReadResult::Ok(1, &[2, 3]));
+        assert_eq!(super::read(&[1, 2, 3]), super::ReadResult::Ok(1, 1));
     }
 
     #[test]
     fn read_multibyte() {
         assert_eq!(
             super::read(&[128, 130, 3, 5]),
-            super::ReadResult::Ok(49408, &[5])
+            super::ReadResult::Ok(49408, 3)
         );
     }
 

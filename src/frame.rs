@@ -13,13 +13,15 @@ pub struct Frame<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseFrameResult<'a> {
-    Ok(Frame<'a>, &'a [u8]),
+    Ok(Frame<'a>, usize),
     NotEnoughData,
     ParseError,
 }
 
-pub fn parse_frame(mut buf: &[u8]) -> ParseFrameResult {
+pub fn parse_frame(buf: &[u8]) -> ParseFrameResult {
+    let mut buf = buf;
     let mut fr: Frame = Default::default();
+    let mut n: usize = 1;
 
     if let [val, rem @ ..] = buf {
         buf = rem;
@@ -34,8 +36,10 @@ pub fn parse_frame(mut buf: &[u8]) -> ParseFrameResult {
     match varint::read(buf) {
         ReadResult::NotEnoughData => return ParseFrameResult::NotEnoughData,
         ReadResult::VarintTooLong => return ParseFrameResult::ParseError,
-        ReadResult::Ok(val, rem) => {
-            buf = rem;
+        ReadResult::Ok(val, n_) => {
+            n += n_;
+            buf = &buf[n_..buf.len()];
+
             fr.id.stream = val;
         }
     }
@@ -43,8 +47,10 @@ pub fn parse_frame(mut buf: &[u8]) -> ParseFrameResult {
     match varint::read(buf) {
         ReadResult::NotEnoughData => return ParseFrameResult::NotEnoughData,
         ReadResult::VarintTooLong => return ParseFrameResult::ParseError,
-        ReadResult::Ok(val, rem) => {
-            buf = rem;
+        ReadResult::Ok(val, n_) => {
+            n += n_;
+            buf = &buf[n_..buf.len()];
+
             fr.id.message = val;
         }
     }
@@ -52,21 +58,20 @@ pub fn parse_frame(mut buf: &[u8]) -> ParseFrameResult {
     match varint::read(buf) {
         ReadResult::NotEnoughData => return ParseFrameResult::NotEnoughData,
         ReadResult::VarintTooLong => return ParseFrameResult::ParseError,
-        ReadResult::Ok(val, rem) => {
-            buf = rem;
+        ReadResult::Ok(val, n_) => {
+            n += n_;
+            buf = &buf[n_..buf.len()];
 
             if val > buf.len() as u64 {
                 return ParseFrameResult::NotEnoughData;
             }
 
-            let (data, rem) = buf.split_at(val as usize);
-            buf = rem;
-
-            fr.data = data;
+            n += val as usize;
+            fr.data = &buf[..val as usize];
         }
     }
 
-    ParseFrameResult::Ok(fr, buf)
+    ParseFrameResult::Ok(fr, n)
 }
 
 pub fn append_frame<'a>(buf: &mut Vec<u8>, fr: &Frame<'a>) {
@@ -104,10 +109,7 @@ mod tests {
         super::append_frame(&mut buf, &FR);
         buf.push(99);
 
-        assert_eq!(
-            super::parse_frame(&buf),
-            super::ParseFrameResult::Ok(FR, &[99])
-        );
+        assert_eq!(super::parse_frame(&buf), super::ParseFrameResult::Ok(FR, 7));
     }
 
     #[test]

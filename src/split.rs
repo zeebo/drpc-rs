@@ -2,7 +2,8 @@ use super::frame;
 use super::packet;
 
 pub struct Split<'a> {
-    pkt: packet::Packet<'a>,
+    pkt: &'a packet::Packet,
+    data: &'a [u8],
     n: usize,
     done: bool,
 }
@@ -16,17 +17,17 @@ impl<'a> Iterator for Split<'a> {
         }
 
         let mut fr = frame::Frame {
-            data: self.pkt.data,
+            data: &self.data,
             id: self.pkt.id,
-            kind: self.pkt.kind as u8,
+            kind: self.pkt.kind.into(),
             done: true,
             control: false,
         };
 
-        if self.pkt.data.len() > self.n && self.n > 0 {
-            let (begin, end) = self.pkt.data.split_at(self.n);
-            fr.data = begin;
-            self.pkt.data = end;
+        if self.data.len() > self.n && self.n > 0 {
+            let (start, end) = self.data.split_at(self.n);
+            fr.data = start;
+            self.data = end;
             fr.done = false;
         }
 
@@ -35,9 +36,10 @@ impl<'a> Iterator for Split<'a> {
     }
 }
 
-pub fn split(pkt: packet::Packet, n: usize) -> Split {
+pub fn split(pkt: &packet::Packet, n: usize) -> Split {
     Split {
         pkt: pkt,
+        data: &pkt.data,
         n: n,
         done: false,
     }
@@ -54,16 +56,16 @@ mod tests {
         message: 10,
     };
 
-    static PKT: packet::Packet = packet::Packet {
-        data: &[1, 2, 3],
-        id: ID,
-        kind: packet::Kind::Message,
-    };
-
     #[test]
     fn test_split_small() {
+        let pkt = packet::Packet {
+            data: vec![1, 2, 3],
+            id: ID,
+            kind: packet::Kind::Message,
+        };
+
         assert_eq!(
-            super::split(PKT, 1).collect::<Vec<_>>(),
+            super::split(&pkt, 1).collect::<Vec<_>>(),
             vec![
                 frame::Frame {
                     data: &[1],
@@ -92,8 +94,14 @@ mod tests {
 
     #[test]
     fn test_split_large() {
+        let pkt = packet::Packet {
+            data: vec![1, 2, 3],
+            id: ID,
+            kind: packet::Kind::Message,
+        };
+
         assert_eq!(
-            super::split(PKT, 0).collect::<Vec<_>>(),
+            super::split(&pkt, 0).collect::<Vec<_>>(),
             vec![frame::Frame {
                 data: &[1, 2, 3],
                 id: ID,

@@ -12,12 +12,9 @@ struct Writer<'a, E> {
 
 impl<'a, E> Writer<'a, E> {
     fn new(tr: Transport<'a, E>, size: usize) -> Writer<'a, E> {
-        let mut buf = Vec::new();
-        buf.reserve(size);
-
         Writer {
             tr: tr,
-            buf: buf,
+            buf: Vec::with_capacity(size),
             size: size,
         }
     }
@@ -28,9 +25,9 @@ impl<'a, E> Writer<'a, E> {
 
     fn write_packet(self: &mut Self, pkt: packet::Packet) -> Option<E> {
         self.write_frame(frame::Frame {
-            data: pkt.data,
+            data: &pkt.data,
             id: pkt.id,
-            kind: pkt.kind as u8,
+            kind: pkt.kind.into(),
             done: true,
             control: false,
         })
@@ -65,23 +62,6 @@ mod test {
     use crate::packet;
     use crate::transport;
 
-    impl<'a> transport::Transport for &'a mut Vec<u8> {
-        type Error = ();
-
-        fn write(self: &mut Self, buf: &[u8]) -> Option<Self::Error> {
-            self.extend_from_slice(buf);
-            None
-        }
-
-        fn read(self: &mut Self, _buf: &[u8]) -> (usize, Option<Self::Error>) {
-            (0, None)
-        }
-
-        fn close(self: &mut Self) -> Option<Self::Error> {
-            None
-        }
-    }
-
     #[test]
     fn test_write_packet() {
         let mut buf = Vec::new();
@@ -89,7 +69,7 @@ mod test {
         {
             let mut w = super::Writer::new(Box::new(&mut buf), 5);
             w.write_packet(packet::Packet {
-                data: &[1, 2, 3, 4, 5],
+                data: vec![1, 2, 3, 4, 5],
                 id: id::ID::default(),
                 kind: packet::Kind::Message,
             });
@@ -123,7 +103,7 @@ mod test {
         {
             let mut w = super::Writer::new(Box::new(&mut buf), 50);
             w.write_packet(packet::Packet {
-                data: &[1, 2, 3, 4, 5],
+                data: vec![1, 2, 3, 4, 5],
                 id: id::ID::default(),
                 kind: packet::Kind::Message,
             });
@@ -139,7 +119,7 @@ mod test {
         {
             let mut w = super::Writer::new(Box::new(&mut buf), 50);
             w.write_packet(packet::Packet {
-                data: &[1, 2, 3, 4, 5],
+                data: vec![1, 2, 3, 4, 5],
                 id: id::ID::default(),
                 kind: packet::Kind::Message,
             });
@@ -147,5 +127,39 @@ mod test {
         }
 
         assert_eq!(buf, &[5, 0, 0, 5, 1, 2, 3, 4, 5])
+    }
+
+    #[test]
+    fn test_write_multiple_frame() {
+        let mut buf = Vec::new();
+
+        {
+            let mut w = super::Writer::new(Box::new(&mut buf), 5);
+            w.write_frame(frame::Frame {
+                data: &[1, 2, 3, 4, 5],
+                id: id::ID {
+                    stream: 1,
+                    message: 1,
+                },
+                kind: 2,
+                done: false,
+                control: false,
+            });
+            w.write_frame(frame::Frame {
+                data: &[6, 7, 8, 9, 10],
+                id: id::ID {
+                    stream: 1,
+                    message: 1,
+                },
+                kind: 2,
+                done: true,
+                control: false,
+            });
+        }
+
+        assert_eq!(
+            buf,
+            &[4, 1, 1, 5, 1, 2, 3, 4, 5, 5, 1, 1, 5, 6, 7, 8, 9, 10]
+        )
     }
 }
