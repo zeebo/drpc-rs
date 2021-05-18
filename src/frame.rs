@@ -1,19 +1,14 @@
+use super::id;
 use super::varint;
 use varint::ReadResult;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Default, Clone, Copy)]
-pub struct ID {
-    stream: u64,
-    message: u64,
-}
-
 #[derive(Debug, PartialEq, Eq, Default, Clone, Copy)]
 pub struct Frame<'a> {
-    data: &'a [u8],
-    id: ID,
-    kind: u8,
-    done: bool,
-    control: bool,
+    pub data: &'a [u8],
+    pub id: id::ID,
+    pub kind: u8,
+    pub done: bool,
+    pub control: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -92,9 +87,9 @@ pub fn append_frame<'a>(buf: &mut Vec<u8>, fr: &Frame<'a>) {
 
 #[cfg(test)]
 mod tests {
-    static fr: super::Frame = super::Frame {
+    static FR: super::Frame = super::Frame {
         data: &[1, 2, 3],
-        id: super::ID {
+        id: super::id::ID {
             stream: 5,
             message: 10,
         },
@@ -106,19 +101,19 @@ mod tests {
     #[test]
     fn append_read() {
         let mut buf = vec![];
-        super::append_frame(&mut buf, &fr);
+        super::append_frame(&mut buf, &FR);
         buf.push(99);
 
         assert_eq!(
             super::parse_frame(&buf),
-            super::ParseFrameResult::Ok(fr, &[99])
+            super::ParseFrameResult::Ok(FR, &[99])
         );
     }
 
     #[test]
     fn read_not_enough_data() {
         let mut buf = vec![];
-        super::append_frame(&mut buf, &fr);
+        super::append_frame(&mut buf, &FR);
         buf.truncate(buf.len() - 1);
 
         assert_eq!(
