@@ -1,5 +1,5 @@
-use super::frame;
-use super::packet;
+use crate::wire::frame;
+use crate::wire::packet;
 
 pub struct Split<'a> {
     pkt: &'a packet::Packet,
@@ -47,9 +47,9 @@ pub fn split(pkt: &packet::Packet, n: usize) -> Split {
 
 #[cfg(test)]
 mod tests {
-    use crate::frame;
-    use crate::id;
-    use crate::packet;
+    use crate::wire::frame;
+    use crate::wire::id;
+    use crate::wire::packet;
 
     static ID: id::ID = id::ID {
         stream: 5,

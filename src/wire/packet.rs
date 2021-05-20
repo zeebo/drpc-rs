@@ -1,4 +1,4 @@
-use super::id;
+use crate::wire::id;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Kind {

@@ -1,11 +1,10 @@
 #[derive(Debug, PartialEq, Eq)]
-pub enum ReadResult {
-    Ok(u64, usize),
+pub enum Error {
     NotEnoughData,
     VarintTooLong,
 }
 
-pub fn read(mut buf: &[u8]) -> ReadResult {
+pub fn read(mut buf: &[u8]) -> Result<(u64, usize), Error> {
     let mut out: u64 = 0;
     let mut n: usize = 0;
 
@@ -17,14 +16,14 @@ pub fn read(mut buf: &[u8]) -> ReadResult {
             buf = rem;
 
             if *val < 128 {
-                return ReadResult::Ok(out, n);
+                return Ok((out, n));
             }
         } else {
-            return ReadResult::NotEnoughData;
+            return Err(Error::NotEnoughData);
         }
     }
 
-    ReadResult::VarintTooLong
+    Err(Error::VarintTooLong)
 }
 
 pub fn append(buf: &mut Vec<u8>, mut x: u64) -> () {
@@ -39,27 +38,24 @@ pub fn append(buf: &mut Vec<u8>, mut x: u64) -> () {
 mod tests {
     #[test]
     fn read_simple() {
-        assert_eq!(super::read(&[1, 2, 3]), super::ReadResult::Ok(1, 1));
+        assert_eq!(super::read(&[1, 2, 3]), Ok((1, 1)));
     }
 
     #[test]
     fn read_multibyte() {
-        assert_eq!(
-            super::read(&[128, 130, 3, 5]),
-            super::ReadResult::Ok(49408, 3)
-        );
+        assert_eq!(super::read(&[128, 130, 3, 5]), Ok((49408, 3)));
     }
 
     #[test]
     fn read_not_enough_data() {
-        assert_eq!(super::read(&[128, 130]), super::ReadResult::NotEnoughData);
+        assert_eq!(super::read(&[128, 130]), Err(super::Error::NotEnoughData));
     }
 
     #[test]
     fn read_varint_too_long() {
         assert_eq!(
             super::read(&[128, 128, 128, 128, 128, 128, 128, 128, 128, 128]),
-            super::ReadResult::VarintTooLong
+            Err(super::Error::VarintTooLong),
         );
     }
 
