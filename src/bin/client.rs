@@ -9,7 +9,7 @@ fn main() -> Result<()> {
     let mut tr = TCPTransport::new(socket);
     let mut conn = conn::Conn::new(&mut tr);
 
-    let out = conn.invoke("/service.Service/foo".as_bytes(), &enc, &vec![8, 10])?;
+    let out = conn.invoke("/service.Service/foo".as_bytes(), &enc, &vec![8, 128, 10])?;
     println!("{:?}", &out);
 
     let stream = conn.stream("/service.Service/foo".as_bytes())?;

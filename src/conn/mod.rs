@@ -1,68 +1,61 @@
 use crate::stream;
 use crate::traits;
-use crate::wire;
+use crate::traits::*;
+use crate::wire::packet;
+use crate::wire::transport;
 
-use crate::traits::Stream;
-
-pub struct Conn<'a> {
+pub struct Conn<'a, Tr: Transport> {
     closed: bool,
     sid: u64,
-    stream: stream::Stream<'a>,
+    st: stream::Stream<'a, Tr>,
 }
 
-impl<'a> Conn<'a> {
-    pub fn new(tr: &'a mut dyn traits::Transport) -> Conn<'a> {
+impl<'a, Tr: Transport> Conn<'a, Tr> {
+    pub fn new(tr: &mut Tr) -> Conn<Tr> {
         Conn {
             closed: false,
             sid: 0,
-            stream: stream::Stream::new(0, wire::transport::Transport::new(tr, 1024)),
+            st: stream::Stream::new(0, transport::Transport::new(tr, 1024)),
         }
     }
 
     fn new_stream(self: &mut Self) {
         self.sid += 1;
-        self.stream.reset(self.sid);
+        self.st.reset(self.sid);
     }
-}
 
-impl<'a> traits::Conn for Conn<'a> {
-    fn close(self: &mut Self) -> traits::Result<()> {
+    pub fn close(self: &mut Self) -> Result<()> {
         self.closed = true;
         self.transport().close()
     }
 
-    fn closed(self: &mut Self) -> bool {
+    pub fn closed(self: &mut Self) -> bool {
         self.closed
     }
 
-    fn transport(self: &mut Self) -> &mut dyn traits::Transport {
-        self.stream.transport().transport()
+    pub fn transport(self: &mut Self) -> &mut Tr {
+        self.st.transport().transport()
     }
 
-    fn invoke<In, Out>(
+    pub fn invoke<In, Out, Enc: Encoding<In, Out>>(
         self: &mut Self,
         rpc: &[u8],
-        enc: &dyn traits::Encoding<In, Out>,
+        enc: &Enc,
         input: &In,
-    ) -> traits::Result<Out> {
+    ) -> Result<Out> {
         self.new_stream();
         let buf = enc.marshal(input)?;
-        self.stream
-            .raw_write(wire::packet::Kind::Invoke, rpc.to_owned())?; // TODO: avoid copy
-        self.stream.raw_write(wire::packet::Kind::Message, buf)?;
-        traits::Stream::<In, Out>::close_send(&mut self.stream)?;
-        self.stream.raw_flush()?;
-        self.stream.recv(enc)
+        self.st.raw_write(packet::Kind::Invoke, rpc)?;
+        self.st.raw_write(packet::Kind::Message, buf)?;
+        self.st.close_send()?;
+        self.st.raw_flush()?;
+        self.st.recv(enc)
     }
 
-    fn stream<In, Out>(
-        self: &mut Self,
-        rpc: &[u8],
-    ) -> traits::Result<&mut dyn traits::Stream<In, Out>> {
+    pub fn stream(self: &mut Self, rpc: &[u8]) -> Result<&mut stream::Stream<'a, Tr>> {
         self.new_stream();
-        self.stream
-            .raw_write(wire::packet::Kind::Invoke, rpc.to_owned())?; // TODO: avoid copy
-        self.stream.raw_flush()?;
-        Ok(&mut self.stream)
+        self.st.raw_write(packet::Kind::Invoke, rpc)?;
+        self.st.raw_flush()?;
+        Ok(&mut self.st)
     }
 }

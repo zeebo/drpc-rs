@@ -1,4 +1,5 @@
 use crate::traits;
+use crate::traits::*;
 use crate::wire::frame;
 use crate::wire::id;
 use crate::wire::packet;
@@ -24,33 +25,38 @@ impl std::error::Error for Error {}
 
 //
 
-pub struct Transport<'a> {
-    tr: &'a mut dyn traits::Transport,
+pub struct Transport<'a, Tr: traits::Transport> {
+    tr: &'a mut Tr,
+
     id: id::ID,
+    tmp: Vec<u8>,
+
     buf: Vec<u8>,
     size: usize,
 }
 
-impl<'a> Transport<'a> {
-    pub fn new(tr: &'a mut dyn traits::Transport, size: usize) -> Transport<'a> {
+impl<'a, Tr: traits::Transport> Transport<'a, Tr> {
+    pub fn new(tr: &'a mut Tr, size: usize) -> Transport<'a, Tr> {
         Transport {
             tr: tr,
+
             id: id::ID::default(),
+            tmp: vec![0; 4096],
+
             buf: Vec::with_capacity(size),
             size: size,
         }
     }
 
-    pub fn transport(self: &mut Self) -> &mut dyn traits::Transport {
+    pub fn transport(self: &mut Self) -> &mut Tr {
         self.tr
     }
 
-    pub fn read(self: &mut Self) -> traits::Result<packet::Packet> {
-        let mut tmp = vec![0; 4096];
+    pub fn read(self: &mut Self) -> Result<packet::Packet<Vec<u8>>> {
         let mut buf = Vec::new();
         let mut parsed = 0;
 
-        let mut pkt = packet::Packet::default();
+        let mut pkt = packet::Packet::<Vec<u8>>::default();
 
         loop {
             if parsed > 0 {
@@ -89,8 +95,8 @@ impl<'a> Transport<'a> {
                 }
 
                 Err(frame::Error::NotEnoughData) => {
-                    let n = self.tr.read(&mut tmp)?;
-                    buf.extend_from_slice(&tmp[0..n]);
+                    let n = self.tr.read(&mut self.tmp)?;
+                    buf.extend_from_slice(&self.tmp[0..n]);
                 }
 
                 Err(frame::Error::ParseError) => return Err(Box::new(Error::ParseError)),
@@ -102,9 +108,12 @@ impl<'a> Transport<'a> {
         self.buf.clear();
     }
 
-    pub fn write_packet(self: &mut Self, pkt: packet::Packet) -> traits::Result<()> {
+    pub fn write_packet<D>(self: &mut Self, pkt: packet::Packet<D>) -> Result<()>
+    where
+        D: std::borrow::Borrow<[u8]>,
+    {
         self.write_frame(frame::Frame {
-            data: &pkt.data,
+            data: pkt.data.borrow(),
             id: pkt.id,
             kind: pkt.kind.into(),
             done: true,
@@ -112,7 +121,7 @@ impl<'a> Transport<'a> {
         })
     }
 
-    pub fn write_frame(self: &mut Self, fr: frame::Frame) -> traits::Result<()> {
+    pub fn write_frame(self: &mut Self, fr: frame::Frame) -> Result<()> {
         frame::append_frame(&mut self.buf, &fr);
 
         if self.buf.len() >= self.size {
@@ -125,7 +134,7 @@ impl<'a> Transport<'a> {
         Ok(())
     }
 
-    pub fn flush(self: &mut Self) -> traits::Result<()> {
+    pub fn flush(self: &mut Self) -> Result<()> {
         if self.buf.len() > 0 {
             let result = self.tr.write(&self.buf);
             self.buf.clear();

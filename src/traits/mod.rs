@@ -12,26 +12,26 @@ pub trait Transport {
     fn close(self: &mut Self) -> Result<()>;
 }
 
-pub trait Conn {
-    fn close(self: &mut Self) -> Result<()>;
-    fn closed(self: &mut Self) -> bool;
-    fn transport(self: &mut Self) -> &mut dyn Transport;
+// pub trait Conn<Tr: Transport> {
+//     fn close(self: &mut Self) -> Result<()>;
+//     fn closed(self: &mut Self) -> bool;
+//     fn transport(self: &mut Self) -> &mut Tr;
 
-    fn invoke<In, Out>(
-        self: &mut Self,
-        rpc: &[u8],
-        enc: &dyn Encoding<In, Out>,
-        input: &In,
-    ) -> Result<Out>;
+//     fn invoke<In, Out, Enc: Encoding<In, Out>>(
+//         self: &mut Self,
+//         rpc: &[u8],
+//         enc: &Enc,
+//         input: &In,
+//     ) -> Result<Out>;
 
-    fn stream<In, Out>(self: &mut Self, rpc: &[u8]) -> Result<&mut dyn Stream<In, Out>>;
-}
+//     fn stream<In, Out, St: Stream<In, Out>>(self: &mut Self, rpc: &[u8]) -> Result<&mut St>;
+// }
 
-pub trait Stream<In, Out> {
-    fn close_send(self: &mut Self) -> Result<()>;
-    fn close(self: &mut Self) -> Result<()>;
-    fn error(self: &mut Self, msg: &str) -> Result<()>;
+// pub trait Stream<In, Out> {
+//     fn close_send(self: &mut Self) -> Result<()>;
+//     fn close(self: &mut Self) -> Result<()>;
+//     fn error(self: &mut Self, msg: &str) -> Result<()>;
 
-    fn send(self: &mut Self, enc: &dyn Encoding<In, Out>, input: &In) -> Result<()>;
-    fn recv(self: &mut Self, enc: &dyn Encoding<In, Out>) -> Result<Out>;
-}
+//     fn send<Enc: Encoding<In, Out>>(self: &mut Self, enc: &Enc, input: &In) -> Result<()>;
+//     fn recv<Enc: Encoding<In, Out>>(self: &mut Self, enc: &Enc) -> Result<Out>;
+// }
