@@ -54,7 +54,7 @@ impl<'a, Tr: Transport> Stream<'a, Tr> {
     pub fn new(sid: u64, tr: wire::transport::Transport<'a, Tr>) -> Self {
         Stream {
             id: wire::id::ID::new(sid, 0),
-            tr: tr,
+            tr,
             send: None,
             recv: None,
             term: None,
@@ -81,9 +81,9 @@ impl<'a, Tr: Transport> Stream<'a, Tr> {
     ) -> wire::packet::Packet<D> {
         self.id.message += 1;
         wire::packet::Packet {
-            data: data,
+            data,
             id: self.id,
-            kind: kind,
+            kind,
         }
     }
 

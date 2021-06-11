@@ -41,9 +41,9 @@ where
     D: std::borrow::Borrow<[u8]>,
 {
     Split {
-        pkt: pkt,
+        pkt,
         data: pkt.data.borrow(),
-        n: n,
+        n,
         done: false,
     }
 }

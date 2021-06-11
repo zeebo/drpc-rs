@@ -38,13 +38,13 @@ pub struct Transport<'a, Tr: traits::Transport> {
 impl<'a, Tr: traits::Transport> Transport<'a, Tr> {
     pub fn new(tr: &'a mut Tr, size: usize) -> Transport<'a, Tr> {
         Transport {
-            tr: tr,
+            tr,
 
             id: id::ID::default(),
             tmp: vec![0; 4096],
 
             buf: Vec::with_capacity(size),
-            size: size,
+            size,
         }
     }
 

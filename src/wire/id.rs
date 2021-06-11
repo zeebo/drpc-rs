@@ -5,10 +5,7 @@ pub struct ID {
 }
 
 impl ID {
-    pub fn new(sid: u64, mid: u64) -> Self {
-        ID {
-            stream: sid,
-            message: mid,
-        }
+    pub fn new(stream: u64, message: u64) -> Self {
+        ID { stream, message }
     }
 }

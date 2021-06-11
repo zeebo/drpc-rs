@@ -29,10 +29,7 @@ impl BufferState {
     }
 
     fn from(buf: Vec<u8>) -> BufferState {
-        BufferState {
-            buf: buf,
-            closed: false,
-        }
+        BufferState { buf, closed: false }
     }
 
     fn empty(self: &Self) -> bool {
