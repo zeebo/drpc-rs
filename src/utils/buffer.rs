@@ -1,35 +1,16 @@
-use crate::traits;
-
-#[derive(Debug)]
-pub enum Error {
-    Closed,
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(self, f)
-    }
-}
-
-impl std::error::Error for Error {}
-
-//
+use std::io;
 
 struct BufferState {
     buf: Vec<u8>,
-    closed: bool,
 }
 
 impl BufferState {
     fn new() -> BufferState {
-        BufferState {
-            buf: Vec::new(),
-            closed: false,
-        }
+        BufferState { buf: Vec::new() }
     }
 
     fn from(buf: Vec<u8>) -> BufferState {
-        BufferState { buf, closed: false }
+        BufferState { buf }
     }
 
     fn empty(self: &Self) -> bool {
@@ -66,31 +47,11 @@ impl Buffer {
     }
 }
 
-impl traits::Transport for Buffer {
-    fn write(self: &mut Self, buf: &[u8]) -> traits::Result<usize> {
+impl io::Read for Buffer {
+    fn read(self: &mut Self, buf: &mut [u8]) -> io::Result<usize> {
         let mut state = self.state.lock().unwrap();
-        while !state.closed && state.full() {
+        while state.empty() {
             state = self.cond.wait(state).unwrap();
-        }
-
-        if state.closed {
-            return Err(Box::new(Error::Closed));
-        }
-
-        state.buf.extend_from_slice(buf);
-
-        self.cond.notify_all();
-        Ok(buf.len())
-    }
-
-    fn read(self: &mut Self, buf: &mut [u8]) -> traits::Result<usize> {
-        let mut state = self.state.lock().unwrap();
-        while !state.closed && state.empty() {
-            state = self.cond.wait(state).unwrap();
-        }
-
-        if state.closed {
-            return Err(Box::new(Error::Closed));
         }
 
         let n = std::cmp::min(buf.len(), state.buf.len());
@@ -100,23 +61,28 @@ impl traits::Transport for Buffer {
         self.cond.notify_all();
         Ok(n)
     }
+}
 
-    fn close(self: &mut Self) -> traits::Result<()> {
+impl io::Write for Buffer {
+    fn write(self: &mut Self, buf: &[u8]) -> io::Result<usize> {
         let mut state = self.state.lock().unwrap();
-
-        if state.closed {
-            return Ok(());
+        while state.full() {
+            state = self.cond.wait(state).unwrap();
         }
 
-        state.closed = true;
+        state.buf.extend_from_slice(buf);
 
         self.cond.notify_all();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
 }
 
 mod test {
-    use crate::traits::Transport;
+    use std::io::{Read, Write};
 
     #[test]
     fn test_buffer_write_read() {

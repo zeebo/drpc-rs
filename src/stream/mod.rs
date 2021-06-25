@@ -1,12 +1,15 @@
-use crate::traits;
-use crate::traits::*;
-use crate::wire;
+use packet::Kind::Message;
+
+use crate::wire::{frame, id, packet, split};
+use crate::{enc, wire};
+use std::io::Read;
+use std::marker::PhantomData;
 
 #[derive(Debug, Clone)]
 pub enum Error {
     EOF,
     InvalidInvoke,
-    UnknownPacketKind(wire::packet::Kind),
+    UnknownPacketKind(packet::Kind),
     RemoteError(Vec<u8>),
     RemoteClosed,
     SendClosed,
@@ -32,103 +35,124 @@ fn set_once<T>(opt: &mut Option<T>, val: T) {
     }
 }
 
-fn check_optional(opt: &Option<Error>) -> Result<()> {
-    if let Some(err) = &opt {
-        Err(Box::new(err.clone()))
-    } else {
-        Ok(())
+fn check_optional(opt: &Option<Error>) -> crate::Result<()> {
+    match opt {
+        Some(err) => Err(Box::new(err.clone())),
+        None => Ok(()),
     }
 }
 
-//
+// transport
 
-pub struct Stream<'a, Tr: Transport> {
-    id: wire::id::ID,
-    tr: wire::transport::Transport<'a, Tr>,
+pub trait Transport {
+    fn read_packet_into(&mut self, buf: &mut Vec<u8>) -> crate::Result<(id::ID, packet::Kind)>;
+    fn write_frame(&mut self, fr: frame::Frame) -> crate::Result<()>;
+    fn flush(&mut self) -> crate::Result<()>;
+}
+
+// stream
+
+pub struct Stream<'a, Enc, In, Out> {
+    id: id::ID,
+    tr: &'a mut dyn Transport,
+    buf: &'a mut Vec<u8>,
+
     send: Option<Error>,
     recv: Option<Error>,
     term: Option<Error>,
+
+    _enc: PhantomData<*const Enc>,
+    _in: PhantomData<*const In>,
+    _out: PhantomData<*const Out>,
 }
 
-impl<'a, Tr: Transport> Stream<'a, Tr> {
-    pub fn new(sid: u64, tr: wire::transport::Transport<'a, Tr>) -> Self {
+impl<'a, Enc, In, Out> Stream<'a, Enc, In, Out> {
+    pub fn new(sid: u64, tr: &'a mut dyn Transport, buf: &'a mut Vec<u8>) -> Self {
         Stream {
-            id: wire::id::ID::new(sid, 0),
+            id: id::ID::new(sid, 0),
             tr,
+            buf,
+
             send: None,
             recv: None,
             term: None,
-        }
-    }
 
-    pub fn transport(self: &mut Self) -> &mut wire::transport::Transport<'a, Tr> {
-        &mut self.tr
-    }
-
-    pub fn reset(self: &mut Self, sid: u64) {
-        self.id.stream = sid;
-        self.id.message = 0;
-        self.tr.reset();
-        self.send = None;
-        self.recv = None;
-        self.term = None;
-    }
-
-    fn new_packet<D>(
-        self: &mut Self,
-        kind: wire::packet::Kind,
-        data: D,
-    ) -> wire::packet::Packet<D> {
-        self.id.message += 1;
-        wire::packet::Packet {
-            data,
-            id: self.id,
-            kind,
+            _enc: PhantomData,
+            _in: PhantomData,
+            _out: PhantomData,
         }
     }
 
     //
 
-    pub fn raw_write<D>(self: &mut Self, kind: wire::packet::Kind, buf: D) -> Result<()>
-    where
-        D: std::borrow::Borrow<[u8]>,
-    {
-        let pkt = self.new_packet(kind, buf);
+    fn write_buf(&mut self, kind: packet::Kind) -> crate::Result<()> {
+        self.id.message += 1;
+
+        let pkt = packet::Packet::<&[u8]> {
+            data: self.buf,
+            id: self.id,
+            kind,
+        };
+
         for fr in wire::split::split(&pkt, 1024) {
-            self.tr.write_frame(fr)?
+            self.tr.write_frame(fr)?;
         }
+
         Ok(())
     }
 
-    pub fn raw_flush(self: &mut Self) -> Result<()> {
-        self.tr.flush()
+    fn recv_buf(&mut self) -> crate::Result<()> {
+        loop {
+            let (id, kind) = self.tr.read_packet_into(&mut self.buf)?;
+            if id.stream != self.id.stream {
+                continue;
+            }
+
+            match kind {
+                Message => return Ok(()),
+                packet::Kind::Invoke => self.term_set_err(Error::InvalidInvoke),
+                packet::Kind::Error => {
+                    self.send_set_err(Error::EOF);
+                    self.term_set_err(Error::RemoteError(self.buf.clone()));
+                }
+                packet::Kind::Close => {
+                    self.recv_set_err(Error::EOF);
+                    self.term_set_err(Error::RemoteClosed);
+                }
+                packet::Kind::CloseSend => {
+                    self.recv_set_err(Error::EOF);
+                    self.terminate_if_both_closed();
+                }
+                other => self.term_set_err(Error::UnknownPacketKind(other)),
+            }
+        }
     }
 
     //
 
-    fn send_set_err(self: &mut Self, err: Error) {
+    fn send_set_err(&mut self, err: Error) {
         set_once(&mut self.send, err)
     }
-    fn recv_set_err(self: &mut Self, err: Error) {
+    fn recv_set_err(&mut self, err: Error) {
         set_once(&mut self.recv, err)
     }
-    fn term_set_err(self: &mut Self, err: Error) {
+    fn term_set_err(&mut self, err: Error) {
         set_once(&mut self.term, err)
     }
 
     //
 
-    fn send_closed(self: &Self) -> Result<()> {
+    fn send_closed(self: &Self) -> crate::Result<()> {
         check_optional(&self.send)
     }
-    fn recv_closed(self: &Self) -> Result<()> {
+    fn recv_closed(self: &Self) -> crate::Result<()> {
         check_optional(&self.recv)
     }
-    fn terminated(self: &Self) -> Result<()> {
+    fn terminated(self: &Self) -> crate::Result<()> {
         check_optional(&self.term)
     }
 
-    fn terminate_if_both_closed(self: &mut Self) {
+    fn terminate_if_both_closed(&mut self) {
         if self.send.is_some() && self.recv.is_some() {
             self.term_set_err(Error::TerminatedBothClosed)
         }
@@ -136,92 +160,82 @@ impl<'a, Tr: Transport> Stream<'a, Tr> {
 
     //
 
-    pub fn close_send(self: &mut Self) -> Result<()> {
+    pub fn invoke(&mut self, rpc: &str) -> crate::Result<()> {
+        self.buf.clear();
+        self.buf.extend_from_slice(rpc.as_bytes());
+        self.write_buf(packet::Kind::Invoke)
+    }
+
+    pub fn close_send(&mut self) -> crate::Result<()> {
         if self.send.is_some() || self.term.is_some() {
             return Ok(());
         }
 
         self.send_set_err(Error::SendClosed);
         self.terminate_if_both_closed();
-        self.raw_write(wire::packet::Kind::CloseSend, Vec::new())?;
-        self.raw_flush()
+
+        self.buf.clear();
+        self.write_buf(packet::Kind::CloseSend)?;
+        self.tr.flush()
     }
 
-    pub fn close(self: &mut Self) -> Result<()> {
+    pub fn close(&mut self) -> crate::Result<()> {
         if self.term.is_some() {
             return Ok(());
         }
 
         self.term_set_err(Error::TerminatedSentClose);
-        self.raw_write(wire::packet::Kind::Close, Vec::new())?;
-        self.raw_flush()
+
+        self.buf.clear();
+        self.write_buf(packet::Kind::Close)?;
+        self.tr.flush()
     }
 
-    pub fn error(self: &mut Self, msg: &str) -> Result<()> {
+    pub fn error(&mut self, msg: &str) -> crate::Result<()> {
         if self.term.is_some() {
             return Ok(());
         }
 
-        let mut buf = Vec::with_capacity(8 + msg.len());
-        buf.extend_from_slice(&[0; 8]);
-        buf.extend_from_slice(msg.as_bytes());
-
         self.send_set_err(Error::EOF);
         self.term_set_err(Error::TerminatedSentError);
-        self.raw_write(wire::packet::Kind::Error, buf)?;
-        self.raw_flush()
+
+        self.buf.clear();
+        self.buf.reserve(8 + msg.len());
+        self.buf.extend_from_slice(&[0; 8]);
+        self.buf.extend_from_slice(msg.as_bytes());
+        self.write_buf(packet::Kind::Error)?;
+        self.tr.flush()
     }
+}
 
-    //
-
-    pub fn send<In, Out, Enc: Encoding<In, Out>>(
-        self: &mut Self,
-        enc: &Enc,
-        input: &In,
-    ) -> Result<()> {
+impl<'a, Enc: enc::Marshal<In>, In, Out> Stream<'a, Enc, In, Out> {
+    pub fn send(&mut self, input: &In) -> crate::Result<()> {
         self.send_closed()?;
         self.terminated()?;
 
-        let buf = enc.marshal(input)?;
-        self.raw_write(wire::packet::Kind::Message, buf)?;
-        self.raw_flush()?;
-        Ok(())
+        Enc::marshal(input, &mut *self.buf)?;
+        self.write_buf(Message)
     }
+}
 
-    pub fn recv<In, Out, Enc: Encoding<In, Out>>(self: &mut Self, enc: &Enc) -> Result<Out> {
-        loop {
-            self.recv_closed()?;
-            self.terminated()?;
+impl<'a, Enc: enc::Unmarshal<Out>, In, Out> Stream<'a, Enc, In, Out> {
+    pub fn recv_into(&mut self, out: &mut Out) -> crate::Result<()> {
+        self.recv_closed()?;
+        self.terminated()?;
 
-            let pkt = self.tr.read()?;
+        self.tr.flush()?;
+        self.recv_buf()?;
+        Enc::unmarshal(&self.buf, out)
+    }
+}
 
-            if pkt.id.stream != self.id.stream {
-                continue;
-            }
+impl<'a, Enc: enc::Unmarshal<Out>, In, Out: Default> Stream<'a, Enc, In, Out> {
+    pub fn recv(&mut self) -> crate::Result<Out> {
+        self.recv_closed()?;
+        self.terminated()?;
 
-            match pkt.kind {
-                wire::packet::Kind::Message => {
-                    return enc.unmarshal(&pkt.data);
-                }
-                wire::packet::Kind::Invoke => {
-                    self.term_set_err(Error::InvalidInvoke);
-                }
-                wire::packet::Kind::Error => {
-                    self.send_set_err(Error::EOF);
-                    self.term_set_err(Error::RemoteError(pkt.data.clone()));
-                }
-                wire::packet::Kind::Close => {
-                    self.recv_set_err(Error::EOF);
-                    self.term_set_err(Error::RemoteClosed);
-                }
-                wire::packet::Kind::CloseSend => {
-                    self.recv_set_err(Error::EOF);
-                    self.terminate_if_both_closed();
-                }
-                other => {
-                    self.term_set_err(Error::UnknownPacketKind(other));
-                }
-            }
-        }
+        let mut out = Default::default();
+        self.recv_into(&mut out)?;
+        Ok(out)
     }
 }

@@ -25,6 +25,12 @@ impl From<varint::Error> for Error {
     }
 }
 
+impl<'a> Frame<'a> {
+    pub fn size(self: &Self) -> usize {
+        1 + 9 + 9 + 9 + self.data.len()
+    }
+}
+
 pub fn parse_frame(buf: &[u8]) -> Result<(Frame, usize), Error> {
     let mut buf = buf;
     let mut fr: Frame = Default::default();

@@ -36,10 +36,10 @@ impl<'a, D> Iterator for Split<'a, D> {
     }
 }
 
-pub fn split<'a, D>(pkt: &'a packet::Packet<D>, n: usize) -> Split<'a, D>
-where
-    D: std::borrow::Borrow<[u8]>,
-{
+pub fn split<'a, Data: std::borrow::Borrow<[u8]>>(
+    pkt: &'a packet::Packet<Data>,
+    n: usize,
+) -> Split<'a, Data> {
     Split {
         pkt,
         data: pkt.data.borrow(),

@@ -1,61 +1,68 @@
+use crate::enc;
 use crate::stream;
-use crate::traits;
-use crate::traits::*;
 use crate::wire::packet;
-use crate::wire::transport;
 
-pub struct Conn<'a, Tr: Transport> {
-    closed: bool,
+mod buffered;
+
+pub trait Transport: std::io::Read + std::io::Write {}
+
+impl<T> Transport for T where T: std::io::Read + std::io::Write {}
+
+pub struct Conn<'a> {
     sid: u64,
-    st: stream::Stream<'a, Tr>,
+    tr: buffered::Transport<'a>,
+    buf: Vec<u8>,
 }
 
-impl<'a, Tr: Transport> Conn<'a, Tr> {
-    pub fn new(tr: &mut Tr) -> Conn<Tr> {
+impl<'a> Conn<'a> {
+    pub fn new(tr: &'a mut dyn Transport) -> Conn<'a> {
         Conn {
-            closed: false,
             sid: 0,
-            st: stream::Stream::new(0, transport::Transport::new(tr, 1024)),
+            tr: buffered::Transport::new(tr),
+            buf: Vec::new(),
         }
     }
 
-    fn new_stream(self: &mut Self) {
+    fn new_stream<'s, Enc, In, Out>(&'s mut self) -> stream::Stream<'s, Enc, In, Out> {
         self.sid += 1;
-        self.st.reset(self.sid);
+        stream::Stream::new(self.sid, &mut self.tr, &mut self.buf)
     }
 
-    pub fn close(self: &mut Self) -> Result<()> {
-        self.closed = true;
-        self.transport().close()
+    pub fn invoke<Enc, In, Out>(&mut self, rpc: &str, input: &In) -> crate::Result<Out>
+    where
+        Enc: enc::Marshal<In> + enc::Unmarshal<Out>,
+        Out: Default,
+    {
+        let mut out = Default::default();
+        self.invoke_into::<Enc, _, _>(rpc, input, &mut out)?;
+        Ok(out)
     }
 
-    pub fn closed(self: &mut Self) -> bool {
-        self.closed
-    }
-
-    pub fn transport(self: &mut Self) -> &mut Tr {
-        self.st.transport().transport()
-    }
-
-    pub fn invoke<In, Out, Enc: Encoding<In, Out>>(
-        self: &mut Self,
-        rpc: &[u8],
-        enc: &Enc,
+    pub fn invoke_into<Enc, In, Out>(
+        &mut self,
+        rpc: &str,
         input: &In,
-    ) -> Result<Out> {
-        self.new_stream();
-        let buf = enc.marshal(input)?;
-        self.st.raw_write(packet::Kind::Invoke, rpc)?;
-        self.st.raw_write(packet::Kind::Message, buf)?;
-        self.st.close_send()?;
-        self.st.raw_flush()?;
-        self.st.recv(enc)
+        out: &mut Out,
+    ) -> crate::Result<()>
+    where
+        Enc: enc::Marshal<In> + enc::Unmarshal<Out>,
+    {
+        let mut st = self.new_stream::<Enc, In, Out>();
+        st.invoke(rpc)?;
+        st.send(input)?;
+        st.close_send()?;
+        st.recv_into(out)
     }
 
-    pub fn stream(self: &mut Self, rpc: &[u8]) -> Result<&mut stream::Stream<'a, Tr>> {
-        self.new_stream();
-        self.st.raw_write(packet::Kind::Invoke, rpc)?;
-        self.st.raw_flush()?;
-        Ok(&mut self.st)
+    pub fn stream<'s, Enc, In, Out>(
+        self: &'s mut Self,
+        rpc: &str,
+    ) -> crate::Result<stream::Stream<'s, Enc, In, Out>>
+    where
+        Enc: enc::Marshal<In> + enc::Unmarshal<Out>,
+    {
+        let mut st = self.new_stream();
+        st.invoke(rpc)?;
+        Ok(st)
     }
 }

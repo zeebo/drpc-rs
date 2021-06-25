@@ -46,8 +46,8 @@ impl Default for Kind {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
-pub struct Packet<D> {
-    pub data: D,
+pub struct Packet<Data> {
+    pub data: Data,
     pub id: id::ID,
     pub kind: Kind,
 }
