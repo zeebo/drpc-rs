@@ -22,7 +22,9 @@ pub trait Listener<T> {
 
 impl Listener<net::TcpStream> for net::TcpListener {
     fn accept(&mut self) -> stream::Result<net::TcpStream> {
-        Ok(net::TcpListener::accept(self).map(|s| s.0)?)
+        let socket = net::TcpListener::accept(self).map(|s| s.0)?;
+        socket.set_nodelay(true)?;
+        Ok(socket)
     }
 }
 

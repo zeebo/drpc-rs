@@ -47,7 +47,7 @@ impl<'a> Transport<'a> {
         Err(Error::IOError)
     }
 
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+    fn raw_read(&mut self, buf: &mut [u8]) -> Result<usize> {
         self.err?;
         match self.tr.read(buf) {
             Ok(v) => Ok(v),
@@ -55,7 +55,7 @@ impl<'a> Transport<'a> {
         }
     }
 
-    fn flush(&mut self) -> Result<()> {
+    fn raw_flush(&mut self) -> Result<()> {
         self.err?;
         match self.tr.write(&self.wbuf).and_then(|_| self.tr.flush()) {
             Ok(v) => Ok(v),
@@ -113,7 +113,7 @@ impl<'a> stream::Transport for Transport<'a> {
 
                 Err(frame::Error::NotEnoughData) => {
                     // TODO: can we do this read directly into spare vector capacity?
-                    let n = self.read(&mut tmp)?;
+                    let n = self.raw_read(&mut tmp)?;
                     if n == 0 {
                         return Err(Error::RemoteClosed);
                     }
@@ -129,7 +129,7 @@ impl<'a> stream::Transport for Transport<'a> {
         self.err?;
 
         frame::append_frame(&mut self.wbuf, &fr);
-        if self.wbuf.len() >= 8 * 1024 {
+        if self.wbuf.len() >= 64 * 1024 {
             self.flush()?;
         }
 
@@ -140,7 +140,7 @@ impl<'a> stream::Transport for Transport<'a> {
         self.err?;
 
         if self.wbuf.len() > 0 {
-            let res = self.flush();
+            let res = self.raw_flush();
             self.wbuf.clear();
             res?
         }

@@ -151,7 +151,7 @@ impl<'a> GenericStream<'a> {
             kind,
         };
 
-        for fr in wire::split::split(&pkt, 1024) {
+        for fr in wire::split::split(&pkt, 64 * 1024) {
             self.tr.write_frame(fr)?;
         }
 

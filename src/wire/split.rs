@@ -1,14 +1,14 @@
-use crate::wire::frame;
-use crate::wire::packet;
+use crate::wire::{frame, id, packet};
 
-pub struct Split<'a, D> {
-    pkt: &'a packet::Packet<D>,
+pub struct Split<'a> {
+    id: id::ID,
+    kind: u8,
     data: &'a [u8],
     n: usize,
     done: bool,
 }
 
-impl<'a, D> Iterator for Split<'a, D> {
+impl<'a> Iterator for Split<'a> {
     type Item = frame::Frame<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -18,8 +18,8 @@ impl<'a, D> Iterator for Split<'a, D> {
 
         let mut fr = frame::Frame {
             data: &self.data,
-            id: self.pkt.id,
-            kind: self.pkt.kind.into(),
+            id: self.id,
+            kind: self.kind,
             done: true,
             control: false,
         };
@@ -36,12 +36,10 @@ impl<'a, D> Iterator for Split<'a, D> {
     }
 }
 
-pub fn split<'a, Data: std::borrow::Borrow<[u8]>>(
-    pkt: &'a packet::Packet<Data>,
-    n: usize,
-) -> Split<'a, Data> {
+pub fn split<'a, D: std::borrow::Borrow<[u8]>>(pkt: &'a packet::Packet<D>, n: usize) -> Split<'a> {
     Split {
-        pkt,
+        id: pkt.id,
+        kind: pkt.kind.into(),
         data: pkt.data.borrow(),
         n,
         done: false,
