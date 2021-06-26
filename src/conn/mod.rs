@@ -1,36 +1,32 @@
 use crate::enc;
 use crate::stream;
+use crate::wire;
 use crate::wire::packet;
-
-mod buffered;
-
-pub trait Transport: std::io::Read + std::io::Write {}
-
-impl<T> Transport for T where T: std::io::Read + std::io::Write {}
 
 pub struct Conn<'a> {
     sid: u64,
-    tr: buffered::Transport<'a>,
+    tr: wire::transport::Transport<'a>,
     buf: Vec<u8>,
 }
 
 impl<'a> Conn<'a> {
-    pub fn new(tr: &'a mut dyn Transport) -> Conn<'a> {
+    pub fn new(tr: &'a mut dyn wire::Transport) -> Conn<'a> {
         Conn {
             sid: 0,
-            tr: buffered::Transport::new(tr),
+            tr: wire::transport::Transport::new(tr),
             buf: Vec::new(),
         }
     }
 
     fn new_stream<'s, Enc, In, Out>(&'s mut self) -> stream::Stream<'s, Enc, In, Out> {
         self.sid += 1;
-        stream::Stream::new(self.sid, &mut self.tr, &mut self.buf)
+        stream::GenericStream::new(self.sid, &mut self.tr, &mut self.buf).fix()
     }
 
-    pub fn invoke<Enc, In, Out>(&mut self, rpc: &str, input: &In) -> crate::Result<Out>
+    pub fn invoke<Enc, In, Out>(&mut self, rpc: &[u8], input: &In) -> stream::Result<Out>
     where
-        Enc: enc::Marshal<In> + enc::Unmarshal<Out>,
+        Enc: enc::Marshal<In>,
+        Enc: enc::Unmarshal<Out>,
         Out: Default,
     {
         let mut out = Default::default();
@@ -40,12 +36,13 @@ impl<'a> Conn<'a> {
 
     pub fn invoke_into<Enc, In, Out>(
         &mut self,
-        rpc: &str,
+        rpc: &[u8],
         input: &In,
         out: &mut Out,
-    ) -> crate::Result<()>
+    ) -> stream::Result<()>
     where
-        Enc: enc::Marshal<In> + enc::Unmarshal<Out>,
+        Enc: enc::Marshal<In>,
+        Enc: enc::Unmarshal<Out>,
     {
         let mut st = self.new_stream::<Enc, In, Out>();
         st.invoke(rpc)?;
@@ -56,10 +53,11 @@ impl<'a> Conn<'a> {
 
     pub fn stream<'s, Enc, In, Out>(
         self: &'s mut Self,
-        rpc: &str,
-    ) -> crate::Result<stream::Stream<'s, Enc, In, Out>>
+        rpc: &[u8],
+    ) -> stream::Result<stream::Stream<'s, Enc, In, Out>>
     where
-        Enc: enc::Marshal<In> + enc::Unmarshal<Out>,
+        Enc: enc::Marshal<In>,
+        Enc: enc::Unmarshal<Out>,
     {
         let mut st = self.new_stream();
         st.invoke(rpc)?;
