@@ -1,6 +1,5 @@
 use crate::stream;
 use crate::wire::{frame, id, packet};
-use std::io::{Read, Write};
 
 // error
 
@@ -43,7 +42,7 @@ impl<'a> Transport<'a> {
         }
     }
 
-    fn set_errored<T>(&mut self, e: std::io::Error) -> Result<T> {
+    fn set_errored<T>(&mut self) -> Result<T> {
         self.err = Err(Error::IOError);
         Err(Error::IOError)
     }
@@ -52,7 +51,7 @@ impl<'a> Transport<'a> {
         self.err?;
         match self.tr.read(buf) {
             Ok(v) => Ok(v),
-            Err(e) => self.set_errored(e),
+            Err(_) => self.set_errored(),
         }
     }
 
@@ -60,7 +59,7 @@ impl<'a> Transport<'a> {
         self.err?;
         match self.tr.write(&self.wbuf).and_then(|_| self.tr.flush()) {
             Ok(v) => Ok(v),
-            Err(e) => self.set_errored(e),
+            Err(_) => self.set_errored(),
         }
     }
 }

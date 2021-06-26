@@ -2,7 +2,7 @@ use crate::stream;
 use crate::stream::Transport;
 use crate::wire;
 use crate::wire::packet;
-use std::marker::PhantomData;
+
 use std::net;
 use std::thread::spawn;
 

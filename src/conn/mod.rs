@@ -1,7 +1,6 @@
 use crate::enc;
 use crate::stream;
 use crate::wire;
-use crate::wire::packet;
 
 pub struct Conn<'a> {
     sid: u64,

@@ -1,4 +1,4 @@
-use crate::wire::{frame, id, packet, split, transport};
+use crate::wire::{frame, id, packet, transport};
 use crate::{enc, wire};
 use std::convert::TryInto;
 use std::marker::PhantomData;
