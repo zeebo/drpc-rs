@@ -1,5 +1,7 @@
-use crate::stream;
 use crate::wire::{frame, id, packet};
+
+use async_trait::async_trait;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 // error
 
@@ -23,49 +25,74 @@ impl std::error::Error for Error {}
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-// wrapper
+// wire
 
-pub struct Transport<'a> {
-    tr: &'a mut dyn crate::wire::Transport,
+pub trait Wire: Unpin + Send + AsyncRead + AsyncWrite {}
+
+impl<T> Wire for T where T: Unpin + Send + AsyncRead + AsyncWrite {}
+
+// stream
+
+#[async_trait]
+pub trait Stream: Send {
+    fn wire(&mut self) -> &mut dyn Wire;
+
+    async fn read_packet_into(&mut self, buf: &mut Vec<u8>) -> Result<(id::ID, packet::Kind)>;
+    async fn write_frame(&mut self, fr: frame::Frame<'_>) -> Result<()>;
+    async fn flush(&mut self) -> Result<()>;
+}
+
+// transport
+
+pub struct Transport<W> {
+    w: W,
     wbuf: Vec<u8>,
     rbuf: Vec<u8>,
     err: Result<()>,
 }
 
-impl<'a> Transport<'a> {
-    pub fn new(tr: &'a mut dyn crate::wire::Transport) -> Transport<'a> {
+impl<W: Wire> Transport<W> {
+    pub fn new(w: W) -> Transport<W> {
         Transport {
-            tr,
+            w,
             wbuf: Vec::new(),
             rbuf: Vec::new(),
             err: Ok(()),
         }
     }
 
-    fn set_errored<T>(&mut self) -> Result<T> {
+    fn set_errored<V>(&mut self) -> Result<V> {
         self.err = Err(Error::IOError);
         Err(Error::IOError)
     }
 
-    fn raw_read(&mut self, buf: &mut [u8]) -> Result<usize> {
+    async fn raw_read(&mut self, buf: &mut [u8]) -> Result<usize> {
         self.err?;
-        match self.tr.read(buf) {
+        match self.w.read(buf).await {
             Ok(v) => Ok(v),
             Err(_) => self.set_errored(),
         }
     }
 
-    fn raw_flush(&mut self) -> Result<()> {
+    async fn raw_flush(&mut self) -> Result<()> {
         self.err?;
-        match self.tr.write(&self.wbuf).and_then(|_| self.tr.flush()) {
-            Ok(v) => Ok(v),
+        match self.w.write(&self.wbuf).await {
             Err(_) => self.set_errored(),
+            Ok(_) => match self.w.flush().await {
+                Err(_) => self.set_errored(),
+                Ok(v) => Ok(v),
+            },
         }
     }
 }
 
-impl<'a> stream::Transport for Transport<'a> {
-    fn read_packet_into(&mut self, buf: &mut Vec<u8>) -> Result<(id::ID, packet::Kind)> {
+#[async_trait]
+impl<W: Wire> Stream for Transport<W> {
+    fn wire(&mut self) -> &mut dyn Wire {
+        &mut self.w
+    }
+
+    async fn read_packet_into(&mut self, buf: &mut Vec<u8>) -> Result<(id::ID, packet::Kind)> {
         self.err?;
 
         let mut tmp = [0; 4096];
@@ -113,7 +140,7 @@ impl<'a> stream::Transport for Transport<'a> {
 
                 Err(frame::Error::NotEnoughData) => {
                     // TODO: can we do this read directly into spare vector capacity?
-                    let n = self.raw_read(&mut tmp)?;
+                    let n = self.raw_read(&mut tmp).await?;
                     if n == 0 {
                         return Err(Error::RemoteClosed);
                     }
@@ -125,22 +152,22 @@ impl<'a> stream::Transport for Transport<'a> {
         }
     }
 
-    fn write_frame(&mut self, fr: frame::Frame) -> Result<()> {
+    async fn write_frame(&mut self, fr: frame::Frame<'_>) -> Result<()> {
         self.err?;
 
         frame::append_frame(&mut self.wbuf, &fr);
         if self.wbuf.len() >= 64 * 1024 {
-            self.flush()?;
+            self.flush().await?;
         }
 
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<()> {
+    async fn flush(&mut self) -> Result<()> {
         self.err?;
 
         if self.wbuf.len() > 0 {
-            let res = self.raw_flush();
+            let res = self.raw_flush().await;
             self.wbuf.clear();
             res?
         }

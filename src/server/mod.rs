@@ -1,61 +1,76 @@
-use crate::stream;
-use crate::stream::Transport;
-use crate::wire;
-use crate::wire::packet;
+use crate::transport::Stream;
+use crate::{stream, transport, wire::packet};
 
-use std::net;
-use std::thread::spawn;
+use async_trait::async_trait;
 
-pub trait Mux {
-    fn serve<'a>(&self, rpc: &[u8], stream: stream::GenericStream<'a>) -> stream::Result<()>;
+use tokio::net;
+use tokio::task;
+
+#[async_trait]
+pub trait Mux: Clone {
+    async fn serve<'a>(
+        &self,
+        rpc: &[u8],
+        stream: &mut stream::GenericStream<'a>,
+    ) -> stream::Result<()>;
 }
 
-impl<T: Mux> Mux for std::sync::Arc<T> {
-    fn serve<'a>(&self, rpc: &[u8], stream: stream::GenericStream<'a>) -> stream::Result<()> {
-        self.as_ref().serve(rpc, stream)
-    }
-}
-
+#[async_trait]
 pub trait Listener<T> {
-    fn accept(&mut self) -> stream::Result<T>;
+    async fn accept(&self) -> stream::Result<T>;
 }
 
+#[async_trait]
 impl Listener<net::TcpStream> for net::TcpListener {
-    fn accept(&mut self) -> stream::Result<net::TcpStream> {
-        let socket = net::TcpListener::accept(self).map(|s| s.0)?;
+    async fn accept(&self) -> stream::Result<net::TcpStream> {
+        let socket = net::TcpListener::accept(self).await.map(|s| s.0)?;
         socket.set_nodelay(true)?;
         Ok(socket)
     }
 }
 
-pub fn run<L, T, M>(mut lis: L, mux: M) -> stream::Result<()>
+pub async fn run<L, W, M>(lis: L, mux: M) -> stream::Result<()>
 where
-    L: Listener<T>,
-    T: wire::Transport + Send + 'static,
-    M: Mux + Sync + Send + 'static,
+    L: Listener<W>,
+    W: transport::Wire + Send + 'static,
+    M: Mux + Send + Sync + 'static,
 {
-    let mux = std::sync::Arc::new(mux);
-
     loop {
-        let tr = lis.accept()?;
+        let wire = lis.accept().await?;
         let mux = mux.clone();
-        spawn(move || {
-            let _ = handle_transport(tr, mux);
+        task::spawn(async move {
+            let _ = handle_transport::<W, M>(wire, mux).await;
         });
     }
 }
 
-pub fn handle_transport<T: wire::Transport, M: Mux>(mut tr: T, mux: M) -> stream::Result<()> {
-    let mut tr = wire::transport::Transport::new(&mut tr);
+pub async fn handle_transport<W, M>(mut wire: W, mux: M)
+where
+    W: transport::Wire,
+    M: Mux,
+{
+    let mut tr = transport::Transport::new(&mut wire);
     let mut mbuf = Vec::new();
     let mut sbuf = Vec::new();
 
     loop {
-        let (id, kind) = tr.read_packet_into(&mut mbuf)?;
+        let (id, kind) = match tr.read_packet_into(&mut mbuf).await {
+            Ok((id, kind)) => (id, kind),
+            Err(_) => return,
+        };
         if kind != packet::Kind::Invoke {
             continue;
         }
-        let st = stream::GenericStream::new(id.stream, &mut tr, &mut sbuf);
-        let _ = mux.serve(&mbuf, st);
+
+        let mut st = stream::GenericStream::new(id.stream, &mut tr, &mut sbuf);
+        match mux.serve(&mbuf, &mut st).await {
+            Ok(()) => (),
+            Err(stream::Error::StateError(stream::State::EOF)) => (),
+            Err(err) => {
+                let msg = err.to_string();
+                let _ = st.error(&*msg, 10).await;
+                return;
+            }
+        }
     }
 }
