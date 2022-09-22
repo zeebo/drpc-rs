@@ -1,4 +1,4 @@
-use crate::transport::Stream;
+use crate::Transport;
 use crate::{stream, transport, wire::packet};
 
 use async_trait::async_trait;
@@ -8,11 +8,7 @@ use tokio::task;
 
 #[async_trait]
 pub trait Mux: Clone {
-    async fn serve<'a>(
-        &self,
-        rpc: &[u8],
-        stream: &mut stream::GenericStream<'a>,
-    ) -> stream::Result<()>;
+    async fn serve<'a>(&self, rpc: &[u8], st: &mut stream::Stream<'a>) -> stream::Result<()>;
 }
 
 #[async_trait]
@@ -32,7 +28,7 @@ impl Listener<net::TcpStream> for net::TcpListener {
 pub async fn run<L, W, M>(lis: L, mux: M) -> stream::Result<()>
 where
     L: Listener<W>,
-    W: transport::Wire + Send + 'static,
+    W: crate::Wire + Send + 'static,
     M: Mux + Send + Sync + 'static,
 {
     loop {
@@ -46,7 +42,7 @@ where
 
 pub async fn handle_transport<W, M>(mut wire: W, mux: M)
 where
-    W: transport::Wire,
+    W: crate::Wire,
     M: Mux,
 {
     let mut tr = transport::Transport::new(&mut wire);
@@ -62,7 +58,8 @@ where
             continue;
         }
 
-        let mut st = stream::GenericStream::new(id.stream, &mut tr, &mut sbuf);
+        let mut st = stream::Stream::new(id.stream, &mut tr, &mut sbuf);
+
         match mux.serve(&mbuf, &mut st).await {
             Ok(()) => (),
             Err(stream::Error::StateError(stream::State::EOF)) => (),

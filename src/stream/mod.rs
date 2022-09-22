@@ -1,8 +1,9 @@
+use async_trait::async_trait;
+
 use crate::{
     enc, transport,
     wire::{self, id, packet},
 };
-use core::marker::PhantomData;
 use std::convert::TryInto;
 
 #[derive(Debug, Clone)]
@@ -35,7 +36,6 @@ pub enum Error {
     TransportError(transport::Error),
     IOError(std::io::Error),
     EncodingError(enc::Error),
-    AnyError(Box<dyn std::error::Error + Send>),
 }
 
 impl std::error::Error for Error {}
@@ -104,9 +104,9 @@ where
 
 // generic stream
 
-pub struct GenericStream<'a> {
+pub struct Stream<'a> {
     id: id::ID,
-    tr: &'a mut dyn transport::Stream,
+    tr: &'a mut dyn crate::Transport,
     buf: &'a mut Vec<u8>,
 
     send: Option<State>,
@@ -114,9 +114,9 @@ pub struct GenericStream<'a> {
     term: Option<State>,
 }
 
-impl<'a> GenericStream<'a> {
-    pub fn new(sid: u64, tr: &'a mut dyn transport::Stream, buf: &'a mut Vec<u8>) -> Self {
-        GenericStream {
+impl<'a> Stream<'a> {
+    pub fn new(sid: u64, tr: &'a mut dyn crate::Transport, buf: &'a mut Vec<u8>) -> Self {
+        Stream {
             id: id::ID::new(sid, 0),
             tr,
             buf,
@@ -127,7 +127,7 @@ impl<'a> GenericStream<'a> {
         }
     }
 
-    pub fn transport<'tr>(&'tr mut self) -> &'tr mut dyn transport::Stream {
+    pub fn transport(&mut self) -> &mut dyn crate::Transport {
         self.tr
     }
 
@@ -273,88 +273,51 @@ impl<'a> GenericStream<'a> {
         self.tr.flush().await?;
         Ok(())
     }
+}
 
-    pub async fn send<Enc: enc::Marshal<In>, In>(&mut self, input: &In) -> Result<()> {
+#[async_trait]
+impl<'a, In: enc::Marshal> crate::StreamSend<In> for Stream<'a> {
+    async fn send(&mut self, input: &In) -> Result<()> {
         self.send.as_error()?;
         self.term.as_error()?;
 
-        Enc::marshal(input, &mut *self.buf)?;
+        input.marshal(&mut *self.buf)?;
         self.write_buf(packet::Kind::Message).await
     }
+}
 
-    pub async fn recv_into<Enc: enc::Unmarshal<Out>, Out>(&mut self, out: &mut Out) -> Result<()> {
+#[async_trait]
+impl<'a, Out: enc::Unmarshal> crate::StreamRecv<Out> for Stream<'a> {
+    async fn recv_into(&mut self, out: &mut Out) -> Result<()> {
         self.recv.as_error()?;
         self.term.as_error()?;
 
         self.tr.flush().await?;
         self.recv_buf().await?;
-        Enc::unmarshal(&self.buf, out)?;
+        out.unmarshal(&self.buf)?;
         Ok(())
     }
-
-    pub async fn recv<Enc: enc::Unmarshal<Out>, Out: Default>(&mut self) -> Result<Out> {
-        let mut out = Default::default();
-        self.recv_into::<Enc, Out>(&mut out).await?;
-        Ok(out)
-    }
-
-    pub fn fix<Enc, In, Out>(self) -> Stream<'a, Enc, In, Out> {
-        Stream {
-            g: self,
-            _enc: PhantomData,
-            _in: PhantomData,
-            _out: PhantomData,
-        }
-    }
 }
 
-pub struct Stream<'a, Enc, In, Out> {
-    g: GenericStream<'a>,
-    _enc: PhantomData<Enc>,
-    _in: PhantomData<In>,
-    _out: PhantomData<Out>,
-}
-
-impl<'a, Enc, In, Out> Stream<'a, Enc, In, Out> {
-    pub fn transport<'tr>(&'tr mut self) -> &'tr mut dyn transport::Stream {
-        self.g.transport()
+#[async_trait]
+impl<'a, In: enc::Marshal, Out: enc::Unmarshal> crate::Stream<In, Out> for Stream<'a> {
+    fn transport(&mut self) -> &mut dyn crate::Transport {
+        self.transport()
     }
 
-    pub fn id(&self) -> u64 {
-        self.g.id()
+    async fn invoke(&mut self, rpc: &[u8]) -> Result<()> {
+        self.invoke(rpc).await
     }
 
-    pub async fn invoke(&mut self, rpc: &[u8]) -> Result<()> {
-        self.g.invoke(rpc).await
+    async fn close_send(&mut self) -> Result<()> {
+        self.close_send().await
     }
 
-    pub async fn close_send(&mut self) -> Result<()> {
-        self.g.close_send().await
+    async fn close(&mut self) -> Result<()> {
+        self.close().await
     }
 
-    pub async fn close(&mut self) -> Result<()> {
-        self.g.close().await
-    }
-
-    pub async fn error(&mut self, msg: &str, code: u64) -> Result<()> {
-        self.g.error(msg, code).await
-    }
-}
-
-impl<'a, Enc: enc::Marshal<In> + Send, In, Out> Stream<'a, Enc, In, Out> {
-    pub async fn send(&mut self, input: &In) -> Result<()> {
-        self.g.send::<Enc, In>(input).await
-    }
-}
-
-impl<'a, Enc: enc::Unmarshal<Out>, In, Out> Stream<'a, Enc, In, Out> {
-    pub async fn recv_into(&mut self, out: &mut Out) -> Result<()> {
-        self.g.recv_into::<Enc, Out>(out).await
-    }
-}
-
-impl<'a, Enc: enc::Unmarshal<Out>, In, Out: Default> Stream<'a, Enc, In, Out> {
-    pub async fn recv(&mut self) -> Result<Out> {
-        self.g.recv::<Enc, Out>().await
+    async fn error(&mut self, msg: &str, code: u64) -> Result<()> {
+        self.error(msg, code).await
     }
 }

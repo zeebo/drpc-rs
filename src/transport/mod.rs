@@ -1,7 +1,7 @@
 use crate::wire::{frame, id, packet};
 
 use async_trait::async_trait;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 // error
 
@@ -25,23 +25,6 @@ impl std::error::Error for Error {}
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-// wire
-
-pub trait Wire: Unpin + Send + AsyncRead + AsyncWrite {}
-
-impl<T> Wire for T where T: Unpin + Send + AsyncRead + AsyncWrite {}
-
-// stream
-
-#[async_trait]
-pub trait Stream: Send {
-    fn wire(&mut self) -> &mut dyn Wire;
-
-    async fn read_packet_into(&mut self, buf: &mut Vec<u8>) -> Result<(id::ID, packet::Kind)>;
-    async fn write_frame(&mut self, fr: frame::Frame<'_>) -> Result<()>;
-    async fn flush(&mut self) -> Result<()>;
-}
-
 // transport
 
 pub struct Transport<W> {
@@ -51,7 +34,7 @@ pub struct Transport<W> {
     err: Result<()>,
 }
 
-impl<W: Wire> Transport<W> {
+impl<W: crate::Wire> Transport<W> {
     pub fn new(w: W) -> Transport<W> {
         Transport {
             w,
@@ -87,8 +70,8 @@ impl<W: Wire> Transport<W> {
 }
 
 #[async_trait]
-impl<W: Wire> Stream for Transport<W> {
-    fn wire(&mut self) -> &mut dyn Wire {
+impl<W: crate::Wire> crate::Transport for Transport<W> {
+    fn wire(&mut self) -> &mut dyn crate::Wire {
         &mut self.w
     }
 

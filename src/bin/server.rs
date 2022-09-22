@@ -1,4 +1,4 @@
-use drpc::{server, stream};
+use drpc::{enc, server, stream};
 
 use async_trait::async_trait;
 use tokio::net::TcpListener;
@@ -13,34 +13,49 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 #[derive(Clone)]
 struct EchoMux;
 
-#[derive(Debug)]
-struct Foo;
+#[async_trait]
+impl server::Mux for EchoMux {
+    async fn serve<'a>(&self, rpc: &[u8], st: &mut stream::Stream<'a>) -> stream::Result<()> {
+        println!("{:?}: {:?}", st.id(), String::from_utf8_lossy(rpc));
 
-impl std::fmt::Display for Foo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(self, f)
+        rpc1(st).await?;
+        rpc2(st).await?;
+
+        println!("done");
+
+        Ok(())
     }
 }
 
-impl std::error::Error for Foo {}
+struct Foo;
 
-#[async_trait]
-impl server::Mux for EchoMux {
-    async fn serve<'a>(
-        &self,
-        rpc: &[u8],
-        st: &mut stream::GenericStream<'a>,
-    ) -> stream::Result<()> {
-        println!("{:?}: {:?}", st.id(), String::from_utf8_lossy(rpc));
-
-        let mut buf = Vec::new();
-        // let mut st = st.fix::<(), Vec<u8>, Vec<u8>>();
-
-        Err(stream::Error::AnyError(Box::new(Foo)))?;
-
-        loop {
-            st.recv_into::<(), _>(&mut buf).await?;
-            st.send::<(), _>(&buf).await?;
-        }
+impl enc::Marshal for Foo {
+    fn marshal(&self, _: &mut Vec<u8>) -> enc::Result<()> {
+        Ok(())
     }
+}
+
+impl enc::Unmarshal for Foo {
+    fn unmarshal(&mut self, _: &[u8]) -> enc::Result<()> {
+        Ok(())
+    }
+}
+
+async fn rpc1<S>(s: &mut S) -> stream::Result<()>
+where
+    S: drpc::Stream<Foo, Foo>,
+{
+    s.recv_into(&mut Foo {}).await?;
+    s.send(&Foo {}).await?;
+    Ok(())
+}
+
+async fn rpc2<S>(s: &mut S) -> stream::Result<()>
+where
+    S: drpc::Stream<Vec<u8>, Vec<u8>>,
+{
+    let mut i = vec![];
+    s.recv_into(&mut i).await?;
+    // s.send(&vec![1, 2, 3]).await?;
+    Ok(())
 }

@@ -1,69 +1,79 @@
-use crate::{
-    enc, stream,
-    transport::{self, Stream},
-};
+use async_trait::async_trait;
 
-pub struct Conn<W> {
+use crate::{enc, stream, Transport};
+
+use crate::{StreamRecv, StreamSend};
+
+pub struct Conn<T: crate::Transport> {
     sid: u64,
-    tr: transport::Transport<W>,
+    tr: T,
     buf: Vec<u8>,
 }
 
-impl<W: transport::Wire> Conn<W> {
-    pub fn new(w: W) -> Conn<W> {
+impl<T: crate::Transport> Conn<T> {
+    pub fn new(tr: T) -> Conn<T> {
         Conn {
             sid: 0,
-            tr: transport::Transport::new(w),
+            tr,
             buf: Vec::new(),
         }
     }
 
-    fn new_stream<'s>(&'s mut self) -> stream::GenericStream<'s> {
+    fn new_stream<'s>(&'s mut self) -> stream::Stream<'s> {
         self.sid += 1;
-        stream::GenericStream::new(self.sid, &mut self.tr, &mut self.buf)
+        stream::Stream::new(self.sid, &mut self.tr, &mut self.buf)
     }
 
-    pub fn wire(&mut self) -> &mut dyn transport::Wire {
-        self.tr.wire()
+    pub fn transport(&mut self) -> &mut T {
+        &mut self.tr
     }
 
-    pub async fn invoke_into<Enc, In, Out>(
+    pub async fn invoke_into<In: enc::Marshal, Out: enc::Unmarshal>(
         &mut self,
         rpc: &[u8],
         input: &In,
         out: &mut Out,
-    ) -> stream::Result<()>
-    where
-        Enc: enc::Marshal<In> + enc::Unmarshal<Out> + Send,
-    {
+    ) -> stream::Result<()> {
         let mut st = self.new_stream();
         st.invoke(rpc).await?;
-        st.send::<Enc, In>(input).await?;
+        st.send(input).await?;
         st.close_send().await?;
-        st.recv_into::<Enc, Out>(out).await?;
+        st.recv_into(out).await?;
+        st.close().await?;
         Ok(())
     }
 
-    pub async fn invoke<Enc, In, Out: Default>(
+    pub async fn stream<'s>(&'s mut self, rpc: &[u8]) -> stream::Result<stream::Stream<'s>> {
+        let mut st = self.new_stream();
+        st.invoke(rpc).await?;
+        Ok(st)
+    }
+}
+
+#[async_trait]
+impl<T: crate::Transport> crate::Conn for Conn<T> {
+    fn transport(&mut self) -> &mut dyn Transport {
+        self.transport()
+    }
+
+    async fn invoke_into<In: enc::Marshal, Out: enc::Unmarshal>(
         &mut self,
         rpc: &[u8],
         input: &In,
-    ) -> stream::Result<Out>
-    where
-        Enc: enc::Marshal<In> + enc::Unmarshal<Out> + Send,
-    {
-        let mut out = Default::default();
-        self.invoke_into::<Enc, In, Out>(rpc, input, &mut out)
-            .await?;
-        Ok(out)
+        out: &mut Out,
+    ) -> stream::Result<()> {
+        self.invoke_into(rpc, input, out).await
     }
 
-    pub async fn stream<'s, Enc: 's, In: 's, Out: 's>(
+    async fn stream<'s, In, Out>(
         &'s mut self,
         rpc: &[u8],
-    ) -> stream::Result<stream::Stream<'s, Enc, In, Out>> {
-        let mut st = self.new_stream();
-        st.invoke(rpc).await?;
-        Ok(st.fix())
+    ) -> stream::Result<Box<dyn crate::Stream<In, Out> + 's>>
+    where
+        In: enc::Marshal + 's,
+        Out: enc::Unmarshal + 's,
+    {
+        let st = self.stream(rpc).await?;
+        Ok(Box::new(st))
     }
 }
